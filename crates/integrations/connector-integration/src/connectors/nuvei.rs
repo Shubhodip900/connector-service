@@ -670,3 +670,18 @@ impl<T: PaymentMethodDataTypes + Debug + Sync + Send + 'static + Serialize>
     > for Nuvei<T>
 {
 }
+
+
+// TODO: Implement card flow for nuvei
+
+
+// TODO: Implement card flow for nuvei
+
+
+// TODO: Implement card flow for nuvei
+
+
+// TODO: Implement card flow for nuvei
+
+
+// TODO: Implement card flow for nuvei
