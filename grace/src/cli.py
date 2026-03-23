@@ -140,6 +140,72 @@ def techspec(connector, folder, urls, output, test_only, verbose, mock_server, e
     # Run the async workflow
     asyncio.run(run_techspec())
 
+@cli.command()
+@click.argument('connector')
+@click.option('--flow', default='card', help='Payment flow to implement (e.g., card, bank_transfer, voucher)')
+@click.option('--techspec', '-t', help='Path to existing techspec file')
+@click.option('--branch', '-b', help='Git branch to work on')
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
+def integrate(connector, flow, techspec, branch, verbose):
+    """Run full integration pipeline for a connector.
+    
+    This command orchestrates the complete integration workflow:
+    1. Code generation (if not already done)
+    2. Build the connector
+    3. Test with grpcurl
+    4. Create pull request
+    
+    CONNECTOR: Name of the connector (e.g., stripe, adyen)
+    """
+    async def run_integration():
+        try:
+            if verbose:
+                click.echo(f"Starting integration workflow for {connector}...")
+                click.echo(f"Flow: {flow}")
+                if techspec:
+                    click.echo(f"Techspec: {techspec}")
+                click.echo()
+            
+            # Import the integration workflow
+            from .workflows.integration_workflow import run_integration_workflow
+            
+            result = await run_integration_workflow(
+                connector_name=connector,
+                flow=flow,
+                techspec_path=techspec,
+                branch=branch,
+                verbose=verbose
+            )
+            
+            if result["success"]:
+                click.echo(f"\nIntegration completed successfully!")
+                if result.get("pr_url"):
+                    click.echo(f"PR URL: {result['pr_url']}")
+                
+                # Output summary for Connector Forge to parse
+                click.echo(f"\nCONNECTOR: {connector}")
+                click.echo(f"FLOW: {flow}")
+                click.echo(f"STATUS: SUCCESS")
+                if result.get("pr_url"):
+                    click.echo(f"PR_URL: {result['pr_url']}")
+            else:
+                click.echo(f"\nIntegration failed: {result.get('error', 'Unknown error')}")
+                click.echo(f"\nCONNECTOR: {connector}")
+                click.echo(f"FLOW: {flow}")
+                click.echo(f"STATUS: FAILED")
+                click.echo(f"REASON: {result.get('error', 'Unknown error')}")
+                sys.exit(1)
+                
+        except Exception as e:
+            click.echo(f"\nIntegration error: {str(e)}", err=True)
+            if verbose:
+                import traceback
+                click.echo(f"Traceback: {traceback.format_exc()}", err=True)
+            sys.exit(1)
+    
+    asyncio.run(run_integration())
+
+
 def main():
     """Main entry point for Grace CLI."""
     try:
