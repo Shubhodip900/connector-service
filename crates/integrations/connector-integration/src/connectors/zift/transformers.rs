@@ -14,13 +14,39 @@ use domain_types::{
         RefundsResponseData, RepeatPaymentData, ResponseId, SetupMandateRequestData,
     },
     errors::ConnectorError,
-    payment_method_data::{PaymentMethodData, PaymentMethodDataTypes, RawCardNumber},
+    payment_method_data::{BankTransferData, PaymentMethodData, PaymentMethodDataTypes, RawCardNumber},
     router_data::{ConnectorSpecificConfig, ErrorResponse},
     router_data_v2::RouterDataV2,
 };
 
-use hyperswitch_masking::Secret;
+use hyperswitch_masking::{PeekInterface, Secret};
 use serde::{Deserialize, Serialize};
+
+// Bank Transfer payment method data structures
+#[derive(Debug, Clone, Serialize)]
+pub struct AchTransferData {
+    pub account_number: Secret<String>,
+    pub routing_number: Secret<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SepaTransferData {
+    pub iban: Secret<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bic: Option<Secret<String>>,
+    pub account_holder: Secret<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+pub enum ZiftBankTransferMethod {
+    #[serde(rename = "ach")]
+    Ach(AchTransferData),
+    #[serde(rename = "sepa")]
+    Sepa(SepaTransferData),
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1261,5 +1287,99 @@ impl<F> TryFrom<ResponseRouterData<ZiftRefundResponse, Self>>
             response,
             ..item.router_data
         })
+    }
+}
+
+
+impl<T: PaymentMethodDataTypes + Debug + Sync + Send + 'static + Serialize>
+    TryFrom<(
+        &BankTransferData,
+        &RouterDataV2<Authorize, PaymentFlowData, PaymentsAuthorizeData<T>, PaymentsResponseData>,
+    )> for ZiftBankTransferMethod
+{
+    type Error = error_stack::Report<ConnectorError>;
+
+    fn try_from(
+        (bank_transfer_data, item): (
+            &BankTransferData,
+            &RouterDataV2<
+                Authorize,
+                PaymentFlowData,
+                PaymentsAuthorizeData<T>,
+                PaymentsResponseData,
+            >,
+        ),
+    ) -> Result<Self, Self::Error> {
+        match bank_transfer_data {
+            BankTransferData::AchBankTransfer { .. } => {
+                // Extract account_number and routing_number from metadata
+                let metadata = item.request.metadata.as_ref().ok_or(
+                    ConnectorError::MissingRequiredField {
+                        field_name: "metadata for ACH details",
+                    },
+                )?;
+                
+                let ach_data = metadata.peek().get("ach").ok_or(
+                    ConnectorError::MissingRequiredField {
+                        field_name: "ach in metadata",
+                    },
+                )?;
+                
+                let account_number = ach_data
+                    .get("account_number")
+                    .and_then(|v| v.as_str())
+                    .ok_or(ConnectorError::MissingRequiredField {
+                        field_name: "account_number",
+                    })?;
+                    
+                let routing_number = ach_data
+                    .get("routing_number")
+                    .and_then(|v| v.as_str())
+                    .ok_or(ConnectorError::MissingRequiredField {
+                        field_name: "routing_number",
+                    })?;
+
+                Ok(Self::Ach(AchTransferData {
+                    account_number: Secret::new(account_number.to_string()),
+                    routing_number: Secret::new(routing_number.to_string()),
+                    account_type: ach_data.get("account_type").and_then(|v| v.as_str()).map(String::from),
+                }))
+            }
+            
+            BankTransferData::SepaBankTransfer { .. } => {
+                // Handle SEPA transfer - extract IBAN from metadata
+                let metadata = item.request.metadata.as_ref().ok_or(
+                    ConnectorError::MissingRequiredField {
+                        field_name: "metadata for SEPA details",
+                    },
+                )?;
+                
+                let sepa_data = metadata.peek().get("sepa").ok_or(
+                    ConnectorError::MissingRequiredField {
+                        field_name: "sepa in metadata",
+                    },
+                )?;
+                
+                let iban = sepa_data
+                    .get("iban")
+                    .and_then(|v| v.as_str())
+                    .ok_or(ConnectorError::MissingRequiredField {
+                        field_name: "iban",
+                    })?;
+
+                Ok(Self::Sepa(SepaTransferData {
+                    iban: Secret::new(iban.to_string()),
+                    bic: sepa_data.get("bic").and_then(|v| v.as_str()).map(|s| Secret::new(s.to_string())),
+                    account_holder: item.resource_common_data.get_billing_full_name()?,
+                }))
+            }
+            
+            // Return NotImplemented for unsupported variants
+            _ => {
+                Err(ConnectorError::NotImplemented(
+                    "Bank transfer type not yet implemented for Zift".to_string()
+                ).into())
+            }
+        }
     }
 }
