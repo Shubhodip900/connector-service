@@ -13,7 +13,7 @@ use domain_types::{
         RefundsResponseData, ResponseId,
     },
     errors::ConnectorError,
-    payment_method_data::{PaymentMethodData, PaymentMethodDataTypes, RawCardNumber},
+    payment_method_data::{BankTransferData, PaymentMethodData, PaymentMethodDataTypes, RawCardNumber},
     router_data::{ConnectorSpecificConfig, ErrorResponse},
     router_data_v2::RouterDataV2,
     utils,
@@ -35,6 +35,32 @@ impl<T: PaymentMethodDataTypes + std::fmt::Debug + Sync + Send + 'static + Seria
             Self::Charges(inner) => inner.serialize(serializer),
         }
     }
+}
+
+// Bank Transfer payment method data structures
+#[derive(Debug, Clone, Serialize)]
+pub struct AchTransferData {
+    pub account_number: Secret<String>,
+    pub routing_number: Secret<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SepaTransferData {
+    pub iban: Secret<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bic: Option<Secret<String>>,
+    pub account_holder: Secret<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+pub enum FiservBankTransferMethod {
+    #[serde(rename = "ach")]
+    Ach(AchTransferData),
+    #[serde(rename = "sepa")]
+    Sepa(SepaTransferData),
 }
 
 #[derive(Debug, Serialize)]
